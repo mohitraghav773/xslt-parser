@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XSLT Parser Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0;}    
+    .header{padding: 24px 32px;background: rgb(96,37,158);background: linear-gradient(90deg, rgba(96,37,158,1) 0%, rgba(42,20,154,1) 41%, rgba(0,164,255,1) 100%);}
+    .header h1{margin: 0;color: #fff;}
+    h2{margin: 0.83em 0 0;}
+    h3{margin-top: 5px;margin-bottom: 10px;}
+    .wrapper{padding:8px 32px;}
+    #fileList {margin: 10px 0;}
+    .file-name {margin: 5px 0;font-weight: bold;}
+    pre {background: #f9f9f9;padding: 10px;border: 1px solid #ddd;overflow: auto;}
+    /* Style the tab */
+    .tab {overflow: hidden;border: 1px solid #ccc;background-color: #f1f1f1;}
+    /* Style the buttons inside the tab */
+    .tab button {background-color: inherit;float: left;border: none;outline: none;cursor: pointer;padding: 14px 16px;transition: 0.3s;font-size: 17px;}
+    /* Change background color of buttons on hover */
+    .tab button:hover {background-color: #ddd;}
+    /* Create an active/current tablink class */
+    .tab button.active {background-color: #5f1fbe;color:#fff !important;}
+    /* Style the tab content */
+    .tabcontent {display: none;padding: 6px 12px;border: 1px solid #ccc;border-top: none;}
+    .button{color:#5f1fbe !important;border: 1px solid #5f1fbe;border-radius: 4px;padding: 6px 12px;}
+    .button:hover{background-color:#5f1fbe !important; color:#fff !important;}
+
+    .variable {
+    position: relative;
+    cursor: pointer;
+  }
+
+  .variable::after {
+    content: attr(data-line);
+    position: absolute;
+    background-color: #333;
+    color: #fff;
+    padding: 5px;
+    border-radius: 4px;
+    white-space: nowrap;
+    top: -30px;
+    left: 0;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    font-size: 12px;
+    z-index: 1000;
+  }
+
+  .variable:hover::after {
+    opacity: 1;
+  }
+
+  .variable, .unused-variable, .undeclared-variable {
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+
+  .variable:hover {
+    background-color: lightblue;
+  }
+
+  .unused-variable:hover {
+    background-color: lightcoral;
+  }
+
+  .undeclared-variable:hover {
+    background-color: lightgoldenrodyellow;
+  }
+
+
+  .accordion {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .accordion-item {
+            border-bottom: 1px solid #ddd;
+        }
+
+        .accordion-item:last-child {
+            border-bottom: none;
+        }
+
+        .accordion-header {
+            background: #f8f9fa;
+            padding: 10px;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 5px;
+        }
+
+        .accordion-header:hover {
+            background: #e9ecef;
+        }
+
+        .accordion-body {
+            display: none;
+            padding: 10px;
+            background: #ffffff;
+            border-top: 1px solid #ddd;
+        }
+
+        .accordion-item.active .accordion-body {
+            display: block;
+        }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+</head>
+
+<body>
+  <div class="header">
+    <h1>XSLT Parser Tool</h1>
+  </div>
+
+  <div class="wrapper">
+    <p>Select one or more XSLT files to parse:</p>
+    <div class="display:flex, justify-content:space-between">
+      <input type="file" id="fileInput" class="button" style="padding:3px;" multiple accept=".xslt,.xml,.xsl" />
+      <button id="exportButton" class="button" onclick="exportToExcel()">Export to Excel</button>
+    </div>
+    <div id="fileList"></div>
+    <h2>Parsing Results</h2>
+
+    <div class="tab">
+      <button class="tablinks active" onclick="openTab(event, 'Body')">Body</button>
+      <button class="tablinks" onclick="openTab(event, 'Raw'); processFiles()">Raw</button>
+    </div>
+
+    <div id="Body" class="tabcontent">
+      <div id="results"></div>
+    </div>
+    
+    <div id="Raw" class="tabcontent">
+      <div id="reports"></div>
+    </div>
+  </div>
+
+
+<script>
+  let extractedDataList = [];
+
+  function openTab(evt, tabName) {
+    var i, tabcontent, tablinks;
+    tabcontent = document.getElementsByClassName("tabcontent");
+    for (i = 0; i < tabcontent.length; i++) {
+      tabcontent[i].style.display = "none";
+    }
+    tablinks = document.getElementsByClassName("tablinks");
+    for (i = 0; i < tablinks.length; i++) {
+      tablinks[i].className = tablinks[i].className.replace(" active", "");
+    }
+    document.getElementById(tabName).style.display = "block";
+    evt.currentTarget.className += " active";
+  }
+
+  // Export data to Excel only when button is clicked
+  function exportToExcel() {
+      if (extractedDataList.length === 0) {
+          alert("No data to export. Please upload a file first.");
+          return;
+      }
+
+      const wb = XLSX.utils.book_new();
+
+      extractedDataList.forEach((data) => {
+          const wsData = [
+              ["Variable", "Unused Variable", "Undeclared Variable", "Template", "Unused Template", "Import", "Unused Import", "Include", "Unused Include", "Logic"]
+          ];
+
+          const maxLength = Math.max(
+              data.variables.length, data.unusedVariables.length, data.undeclaredVariables.length,
+              data.templates.length, data.unusedTemplates.length, data.imports.length,
+              data.unusedImports.length, data.includes.length, data.unusedIncludes.length, data.logic.length
+          );
+
+          for (let i = 0; i < maxLength; i++) {
+              const row = [];
+              row.push(data.variables[i]?.name || "");
+              row.push(data.unusedVariables[i] || "");
+              row.push(data.undeclaredVariables[i] || "");
+              row.push(data.templates[i]?.name || "");
+              row.push(data.unusedTemplates[i]?.templateName || "");
+              row.push(data.imports[i] || "");
+              row.push(data.unusedImports[i] || "");
+              row.push(data.includes[i] || "");
+              row.push(data.unusedIncludes[i] || "");
+              row.push(data.logic[i] ? JSON.stringify(data.logic[i]) : "");
+              wsData.push(row);
+          }
+
+          const ws = XLSX.utils.aoa_to_sheet(wsData);
+          XLSX.utils.book_append_sheet(wb, ws, data.fileName.replace(/\.[^/.]+$/, ""));  // Sheet name = file name
+      });
+
+      XLSX.writeFile(wb, "extracted_data.xlsx");
+  }
+
+  // XSLTExtractor class to extract namespaces, imports, variables, templates, and logic
+  class XSLTExtractor {
+    constructor(xmlDoc) {
+      this.xmlDoc = xmlDoc;
+      this.namespaceURI = "http://www.w3.org/1999/XSL/Transform";
+    }
+
+    // Extract namespaces
+    extractNamespaces() {
+      const namespaces = [];
+      const attrs = this.xmlDoc.documentElement.attributes;
+      for (const attr of attrs) {
+        if (attr.name.startsWith("xmlns")) {
+          const prefix = attr.name.includes(":") ? attr.name.split(":")[1] : "";
+          namespaces.push({ prefix, uri: attr.value });
+        }
+      }
+      return namespaces;
+    }
+
+    // Extract includes
+    extractIncludes() {
+      const includes = [];
+      const includeNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "include");
+      for (const includeNode of includeNodes) {
+        includes.push(includeNode.getAttribute("href"));
+      }
+      return includes;
+    }
+    
+    // Extract imports
+    extractImports() {
+      const imports = [];
+      const importNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "import");
+      for (const importNode of importNodes) {
+        imports.push(importNode.getAttribute("href"));
+      }
+      return imports;
+    }
+
+    detectUnusedIncludesAndImports(includes, imports) {
+        const declaredPaths = [...includes, ...imports];
+        const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+        const unusedIncludes = includes.filter(path => !xsltString.includes(path));
+        const unusedImports = imports.filter(path => !xsltString.includes(path));
+        return { unusedIncludes, unusedImports };
+    }
+
+    // Extract variables
+    /*extractVariables() {
+      const variables = [];
+      const variableNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "variable");
+      for (const variableNode of variableNodes) {
+        const name = variableNode.getAttribute("name");
+        const value = variableNode.textContent.trim();
+        variables.push({ name, value });
+      }
+      return variables;
+    }*/
+
+    // Extract variables with all attributes (name, as, select, static, etc.)
+    extractVariables() {
+      const variables = [];
+      const variableNodes = [
+        ...this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "variable"),
+        ...this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "param") // Include <xsl:param>
+      ];
+
+      for (const variableNode of variableNodes) {
+        const attributes = {};
+
+        // Extract all attributes dynamically
+        for (let i = 0; i < variableNode.attributes.length; i++) {
+          const attr = variableNode.attributes[i];
+          attributes[attr.name] = attr.value;
+        }
+
+        // Include the text content if available
+        const value = variableNode.textContent.trim();
+        if (value) {
+          attributes["value"] = value;
+        }
+
+        // Add a type field to differentiate between <xsl:variable> and <xsl:param>
+        attributes["type"] = variableNode.tagName.includes("param") ? "Param" : "Variable";
+
+        variables.push(attributes);
+      }
+
+      return variables;
+    }
+
+
+    // Extract templates and track definitions
+    extractTemplates(templatesByFile, currentFileName) {
+      const templates = [];
+      const templateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "template");
+      for (const templateNode of templateNodes) {
+        const name = templateNode.getAttribute("name");
+        const match = templateNode.getAttribute("match");
+        if (name) templatesByFile[name] = { fileName: currentFileName, isUsed: false };
+        templates.push({ name, match });
+      }
+      return templates;
+    }
+
+    // Extract apply-templates logic and track references
+    extractTemplateReferences(templatesByFile) {
+        const templateReferences = [];
+        const applyTemplateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "apply-templates");
+        for (const applyTemplateNode of applyTemplateNodes) {
+          const select = applyTemplateNode.getAttribute("select") || "N/A";
+          const mode = applyTemplateNode.getAttribute("mode");
+
+          // Mark template as used if mode or name is found
+          if (mode && templatesByFile[mode]) {
+            templatesByFile[mode].isUsed = true;
+          }
+
+          if (name && templatesByFile[name]) {
+            templatesByFile[name].isUsed = true;
+          }
+          templateReferences.push({ select, mode });
+        }
+        // Extract call-template references
+        const callTemplateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "call-template");
+        for (const callTemplateNode of callTemplateNodes) {
+          const name = callTemplateNode.getAttribute("name");
+          if (name && templatesByFile[name]) {
+            templatesByFile[name].isUsed = true;
+          }
+          templateReferences.push({ type: "call-template", name });
+        }
+        return templateReferences;
+    }
+
+    detectUnusedVariablesAndTemplates(variables, templatesByFile) {
+      const unusedVariables = [];
+      const variableUsageRegex = /\$[a-zA-Z0-9_-]+/g;
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+
+      // Detect unused variables
+      variables.forEach((variable) => {
+        const variableName = `$${variable.name}`;
+        const isUsed = xsltString.includes(variableName);
+        if (!isUsed) {
+          unusedVariables.push(variableName);
+        }
+      });
+
+      // Detect unused templates
+      const unusedTemplates = [];
+      for (const [templateName, templateInfo] of Object.entries(templatesByFile)) {
+        if (!templateInfo.isUsed) {
+          unusedTemplates.push({ templateName, fileName: templateInfo.fileName });
+        }
+      }
+
+      return { unusedVariables, unusedTemplates };
+    }
+
+    detectUndeclaredVariables(variables) {
+      const declaredVariables = variables.map((variable) => `$${variable.name}`);
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      const usedVariables = Array.from(xsltString.matchAll(/\$[a-zA-Z0-9_-]+/g)).map((match) => match[0]);
+
+      const undeclaredVariables = usedVariables.filter((variable) => !declaredVariables.includes(variable));
+      return [...new Set(undeclaredVariables)]; // Remove duplicates
+    }
+
+    // Extract logic
+    extractLogic() {
+      const logic = [];
+
+      const extractValueOf = (parentNode) => {
+        const valueOfLogic = [];
+        const valueOfNodes = parentNode.getElementsByTagNameNS(this.namespaceURI, "value-of");
+        for (const valueOfNode of valueOfNodes) {
+          const select = valueOfNode.getAttribute("select");
+          if (select) valueOfLogic.push({ type: "value-of", select });
+        }
+        return valueOfLogic;
+      };
+
+      const extractSortLogic = (parentNode) => {
+        const sortLogic = [];
+        const sortNodes = parentNode.getElementsByTagNameNS(this.namespaceURI, "sort");
+        for (const sortNode of sortNodes) {
+          const select = sortNode.getAttribute("select") || "N/A";
+          const order = sortNode.getAttribute("order") || "ascending";
+          sortLogic.push({ type: "sort", select, order });
+        }
+        return sortLogic;
+      };
+
+      const chooseNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "choose");
+      for (const chooseNode of chooseNodes) {
+        const nestedLogic = [];
+
+        const whenNodes = chooseNode.getElementsByTagNameNS(this.namespaceURI, "when");
+        for (const whenNode of whenNodes) {
+          const test = whenNode.getAttribute("test");
+          const whenLogic = extractValueOf(whenNode);
+          nestedLogic.push({ type: "when", test, valueOf: whenLogic });
+        }
+
+        const otherwiseNodes = chooseNode.getElementsByTagNameNS(this.namespaceURI, "otherwise");
+        for (const otherwiseNode of otherwiseNodes) {
+          const otherwiseLogic = extractValueOf(otherwiseNode);
+          nestedLogic.push({ type: "otherwise", valueOf: otherwiseLogic });
+        }
+
+        logic.push({ type: "choose", nested: nestedLogic });
+      }
+
+      const forEachNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "for-each");
+      for (const forEachNode of forEachNodes) {
+        const select = forEachNode.getAttribute("select");
+        const forEachLogic = extractValueOf(forEachNode);
+        const sortLogic = extractSortLogic(forEachNode);
+        logic.push({ type: "for-each", select, valueOf: forEachLogic, sort: sortLogic });
+      }
+
+      const ifNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "if");
+      for (const ifNode of ifNodes) {
+        const test = ifNode.getAttribute("test");
+        const ifLogic = extractValueOf(ifNode);
+        logic.push({ type: "if", test, valueOf: ifLogic });
+      }
+
+      return logic;
+    }
+
+    /*exportToExcel(variables, unusedVariables, undeclaredVariables, templates, unusedTemplates, imports, unusedImports, includes, unusedIncludes, logic) {
+      const wb = XLSX.utils.book_new();
+      const wsData = [
+        ["Variable", "Unused Variable", "Undeclared Variable", "Template", "Unused Template", "Import", "Unused Import", "Include", "Unused Include", "Logic"]
+      ];
+      
+      const maxLength = Math.max(
+          variables.length, unusedVariables.length, undeclaredVariables.length,
+          templates.length, unusedTemplates.length, imports.length, unusedImports.length,
+          includes.length, unusedIncludes.length, logic.length
+      );
+
+      for (let i = 0; i < maxLength; i++) {
+          const row = [];
+          row.push(variables[i]?.name || "");
+          row.push(unusedVariables[i] || "");
+          row.push(undeclaredVariables[i] || "");
+          row.push(templates[i]?.name || "");
+          row.push(unusedTemplates[i]?.templateName || "");
+          row.push(imports[i] || "");
+          row.push(unusedImports[i] || "");
+          row.push(includes[i] || "");
+          row.push(unusedIncludes[i] || "");
+          row.push(logic[i] ? JSON.stringify(logic[i]) : "");
+          wsData.push(row);
+      }
+
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      XLSX.utils.book_append_sheet(wb, ws, "Extracted Data");
+      
+      XLSX.writeFile(wb, "extracted_data.xlsx");
+    
+    }*/
+
+    generateReport(templatesByFile, fileName) {
+      const namespaces = this.extractNamespaces();
+      const includes = this.extractIncludes();
+      const imports = this.extractImports();
+      const { unusedIncludes, unusedImports } = this.detectUnusedIncludesAndImports(includes, imports);
+      const variables = this.extractVariables();
+      const templates = this.extractTemplates(templatesByFile, fileName);
+      const templateReferences = this.extractTemplateReferences(templatesByFile);
+      const { unusedVariables, unusedTemplates } = this.detectUnusedVariablesAndTemplates(variables, templatesByFile);
+      const undeclaredVariables = this.detectUndeclaredVariables(variables);
+      const logic = this.extractLogic();
+
+      // Store extracted data for export
+      extractedDataList.push({
+          fileName,
+          variables,
+          unusedVariables,
+          undeclaredVariables,
+          templates,
+          unusedTemplates,
+          imports,
+          unusedImports,
+          includes,
+          unusedIncludes,
+          logic
+      });
+
+      let report = `<div><h3>File: ${fileName}</h3>`;
+      report += `<strong>Namespaces:</strong><pre>${JSON.stringify(namespaces, null, 2)}</pre>`;
+      report += `<strong>Includes:</strong><pre>${JSON.stringify(includes, null, 2)}</pre>`;
+      report += `<strong>Unused Includes:</strong><pre>${JSON.stringify(unusedIncludes, null, 2)}</pre>`;
+      report += `<strong>Imports:</strong><pre>${JSON.stringify(imports, null, 2)}</pre>`;
+      report += `<strong>Unused Imports:</strong><pre>${JSON.stringify(unusedImports, null, 2)}</pre>`;
+      report += `<strong>Variables:</strong><pre>${JSON.stringify(variables, null, 2)}</pre>`;
+      report += `<strong>Unused Variables:</strong><pre>${JSON.stringify(unusedVariables, null, 2)}</pre>`;
+      report += `<strong>Undeclared Variables:</strong><pre>${JSON.stringify(undeclaredVariables, null, 2)}</pre>`;
+      report += `<strong>Templates:</strong><pre>${JSON.stringify(templates, null, 2)}</pre>`;
+      report += `<strong>Unused Templates:</strong><pre>${JSON.stringify(unusedTemplates, null, 2)}</pre>`;
+      report += `<strong>Template References:</strong><pre>${JSON.stringify(templateReferences, null, 2)}</pre>`;
+      report += `<strong>Logic:</strong><pre>${JSON.stringify(logic, null, 2)}</pre></div>`;
+      return report;
+    }
+  }
+
+  document.getElementById("fileInput").addEventListener("change", async (event) => {
+    openTab(event, 'Body')
+    document.getElementsByClassName("tablinks")[0].className += " active";
+    const files = event.target.files;
+    const fileListDiv = document.getElementById("fileList");
+    const resultsDiv = document.getElementById("results");
+    fileListDiv.innerHTML = "";
+    resultsDiv.innerHTML = "";
+
+    const templatesByFile = {};
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(e.target.result, "text/xml");
+        const extractor = new XSLTExtractor(xmlDoc);
+        const report = extractor.generateReport(templatesByFile, file.name);
+        resultsDiv.innerHTML += report;
+
+        const fileNameDiv = document.createElement("div");
+        fileNameDiv.className = "file-name";
+        fileNameDiv.textContent = `Parsed: ${file.name}`;
+        fileListDiv.appendChild(fileNameDiv);
+      };
+      reader.readAsText(file);
+    }
+
+      // Button click handler to trigger export
+      /*document.getElementById("exportButton").addEventListener("click", () => {
+          const extractor = new XSLTExtractor(xmlDoc);  // Assuming `xmlDoc` is available
+          extractor.generateReport(templatesByFile, fileName);
+      });*/
+  });
+</script>
+
+
+<script>
+  // Function to handle file input and process multiple XSLT files
+  function processFiles() {
+    const fileInput = document.getElementById("fileInput");
+    const reportsContainer = document.getElementById("reports");
+
+    reportsContainer.innerHTML = '';
+    const files = fileInput.files;
+
+    if (files.length === 0) {
+      alert("Please select at least one file.");
+      return;
+    }
+
+    let templatesByFile = {};
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileReportDiv = document.createElement('div');
+      fileReportDiv.classList.add('file-report');
+
+      const fileNameDiv = document.createElement('div');
+      fileNameDiv.classList.add('file-name');
+      fileNameDiv.textContent = `File: ${file.name}`;
+      fileReportDiv.appendChild(fileNameDiv);
+
+      const reader = new FileReader();
+      reader.onload = function (event) {
+        const fileContent = event.target.result;
+        const lineNumbers = extractLineNumbers(fileContent);
+        const xmlDoc = new DOMParser().parseFromString(fileContent, "application/xml");
+
+        const extractor = new XSLTExtractorRaw(xmlDoc, lineNumbers);
+        let fileReport = extractor.generateReport(templatesByFile);
+
+        const reportDiv = document.createElement('div');
+        reportDiv.style.whiteSpace = "pre-wrap";
+        reportDiv.style.fontFamily = "monospace";
+        reportDiv.innerHTML = fileReport;
+        fileReportDiv.appendChild(reportDiv);
+
+        reportsContainer.appendChild(fileReportDiv);
+      };
+
+      reader.readAsText(file);
+    }
+  }
+
+  // Function to extract line numbers for variables
+  /*function extractLineNumbers(fileContent) {
+    const lines = fileContent.split('\n');
+    const lineNumbers = {};
+
+    lines.forEach((line, index) => {
+      const variableMatch = line.match(/<xsl:variable[^>]*name="([^"]+)"/);
+      if (variableMatch && variableMatch[1]) {
+        const varName = variableMatch[1].trim();
+        lineNumbers[varName] = index + 1;
+      }
+    });
+
+    return lineNumbers;
+  }*/
+
+  function extractLineNumbers(fileContent) {
+    const lines = fileContent.split('\n');
+    const lineNumbers = {};
+
+    lines.forEach((line, index) => {
+      const variableMatch = line.match(/<xsl:variable[^>]*name="([^"]+)"/);
+      if (variableMatch && variableMatch[1]) {
+        const varName = variableMatch[1].trim();
+        lineNumbers[varName] = {
+          lineNumber: index + 1,
+          codeLine: line.trim()  // Store the entire line of code
+        };
+      }
+    });
+
+    return lineNumbers;
+  }
+
+
+
+  // XSLTExtractorRaw class to extract namespaces, imports, variables, templates, and logic
+  class XSLTExtractorRaw {
+    constructor(xmlDoc, lineNumbers) {
+      this.xmlDoc = xmlDoc;
+      this.namespaceURI = "http://www.w3.org/1999/XSL/Transform"; // Update if needed
+      this.lineNumbers = lineNumbers;
+    }
+
+    // Extract namespaces
+    extractNamespaces() {
+      const namespaces = [];
+      const namespaceNodes = this.xmlDoc.getElementsByTagName("xsl:stylesheet")[0].attributes;
+      for (const attr of namespaceNodes) {
+        if (attr.nodeName.startsWith("xmlns:xsl")) {
+          namespaces.push({ prefix: attr.nodeName, uri: attr.nodeValue });
+        }
+      }
+      return namespaces;
+    }
+
+    // Extract imports
+    extractImports() {
+      const imports = [];
+      const importNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "import");
+      for (const importNode of importNodes) {
+        imports.push(importNode.getAttribute("href"));
+      }
+      return imports;
+    }
+
+    // Extract includes
+    extractIncludes() {
+      const includes = [];
+      const includeNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "include");
+      for (const includeNode of includeNodes) {
+        includes.push(includeNode.getAttribute("href"));
+      }
+      return includes;
+    }
+
+    // Detect unused imports
+    detectUnusedImports(imports) {
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      return imports.filter(path => !xsltString.includes(path));
+    }
+
+    // Detect unused includes
+    detectUnusedIncludes(includes) {
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      return includes.filter(path => !xsltString.includes(path));
+    }
+
+    // Extract variables
+    /*extractVariables() {
+      const variables = [];
+      const variableNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "variable");
+
+      for (const variableNode of variableNodes) {
+        const name = variableNode.getAttribute("name");
+        const value = variableNode.textContent.trim();
+
+        // FIX: Properly extract the line number
+        let lineNumber = this.lineNumbers[name];
+        if (typeof lineNumber === 'object' && lineNumber !== null) {
+          // Assume the line number is stored in a 'line' property
+          lineNumber = lineNumber.lineNumber || "Unknown";
+        } else if (!lineNumber) {
+          lineNumber = "Unknown";
+        }
+
+        // Capture the full variable block (including nested elements)
+        const fullBlock = new XMLSerializer().serializeToString(variableNode);
+        variables.push({ name, value, lineNumber, fullBlock });
+      }
+
+      return variables;
+    }*/
+
+    extractVariables() {
+      const variables = [];
+      const variableNodes = [
+        ...this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "variable"),
+        ...this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "param") // Include <xsl:param>
+      ]
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      const xsltLines = xsltString.split('\n'); // Split into lines to track usage locations
+
+      for (const variableNode of variableNodes) {
+        const name = variableNode.getAttribute("name");
+        const select = variableNode.getAttribute("select"); // Extract select attribute 
+        const type = variableNode.tagName.includes("param") ? "Param" : "Variable"; // Identify type
+        let value = variableNode.textContent.trim(); // Extract text content
+        if (select) {
+          value = `${select}`; // Display select query instead of value
+        }
+        
+        // Extract line number
+        let lineNumber = this.lineNumbers[name];
+        if (typeof lineNumber === 'object' && lineNumber !== null) {
+          lineNumber = lineNumber.lineNumber || "Unknown";
+        } else if (!lineNumber) {
+          lineNumber = "Unknown";
+        }
+
+        // Capture full variable block
+        let fullBlock = new XMLSerializer().serializeToString(variableNode);
+
+        // Find where the variable is being used
+        const usageLines = [];
+        const usageBlocks = [];
+        const regex = new RegExp(`\\$${name}\\b`, 'g'); // Match $variableName
+
+        xsltLines.forEach((line, index) => {
+          if (regex.test(line)) {
+            usageLines.push(index + 1 + 1); // Store line number of usage
+            
+            // Capture surrounding code block (5 lines before & after for context)
+            const start = Math.max(0, index - 5);
+            const end = Math.min(xsltLines.length, index + 5);
+            const codeBlock = xsltLines.slice(start, end).join('\n');
+            usageBlocks.push(codeBlock);
+          }
+        });
+
+        // Append occurrences to fullBlock
+        if (usageBlocks.length > 0) {
+          fullBlock += `\n\n<!-- Variable Usage Context -->\n` + usageBlocks.join("\n\n----\n\n");
+        }
+        variables.push({ name, value, lineNumber, fullBlock, usageLines, type });
+      }
+      return variables;
+    }
+
+
+    // Detect unused variables
+    // Updated to return both variable name and line number
+    detectUnusedVariables(variables) {
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      const unusedVariables = [];
+
+      variables.forEach((variable) => {
+        const variableName = `$${variable.name}`;
+        if (!xsltString.includes(variableName)) {
+          unusedVariables.push({
+            name: variable.name,
+            lineNumber: variable.lineNumber || "N/A",
+          });
+        }
+      });
+
+      return unusedVariables;
+    }
+
+
+
+    // Detect undeclared variables (variables used without declaration)
+    // Updated to attach line numbers to undeclared variables
+    detectUndeclaredVariables() {
+      const variables = this.extractVariables();
+      const declaredVariables = new Set(variables.map(variable => variable.name));
+
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      const lines = xsltString.split('\n');
+      const usedVariables = new Set();
+      const undeclaredVariables = [];
+
+      const regex = /\$([a-zA-Z_][a-zA-Z0-9_-]*)/g;
+
+      // Find used variables and their first occurrence line number
+      lines.forEach((line, index) => {
+        let match;
+        while ((match = regex.exec(line)) !== null) {
+          const varName = match[1];
+          if (!declaredVariables.has(varName) && !usedVariables.has(varName)) {
+            usedVariables.add(varName);
+            undeclaredVariables.push({
+              name: varName,
+              lineNumber: index + 1, // First occurrence line number
+            });
+          }
+        }
+      });
+
+      return undeclaredVariables;
+    }
+
+
+
+    // Extract templates and store them in a global object
+    extractTemplates(templatesByFile, fileName) {
+      const templates = [];
+      const templateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "template");
+      for (const templateNode of templateNodes) {
+        const name = templateNode.getAttribute("name");
+        const match = templateNode.getAttribute("match") || "N/A";
+        templates.push({ name, match });
+      }
+      templatesByFile[fileName] = templates; // Store the templates by file name
+      return templates;
+    }
+
+    // Detect unused templates
+    detectUnusedTemplates(templatesByFile) {
+      const xsltString = new XMLSerializer().serializeToString(this.xmlDoc);
+      const unusedTemplates = [];
+
+      for (const [fileName, templates] of Object.entries(templatesByFile)) {
+        templates.forEach(template => {
+          if (!xsltString.includes(template.name)) {
+            unusedTemplates.push({ name: template.name, fileName });
+          }
+        });
+      }
+      return unusedTemplates;
+    }
+
+    extractTemplateReferences(templatesByFile) {
+        const templateReferences = [];
+        const applyTemplateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "apply-templates");
+        for (const applyTemplateNode of applyTemplateNodes) {
+          const select = applyTemplateNode.getAttribute("select") || "N/A";
+          const mode = applyTemplateNode.getAttribute("mode");
+
+          // Mark template as used if mode or name is found
+          if (mode && templatesByFile[mode]) {
+            templatesByFile[mode].isUsed = true;
+          }
+
+          if (name && templatesByFile[name]) {
+            templatesByFile[name].isUsed = true;
+          }
+          templateReferences.push({ select, mode });
+        }
+        // Extract call-template references
+        const callTemplateNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "call-template");
+        for (const callTemplateNode of callTemplateNodes) {
+          const name = callTemplateNode.getAttribute("name");
+          if (name && templatesByFile[name]) {
+            templatesByFile[name].isUsed = true;
+          }
+          templateReferences.push({ type: "call-template", name });
+        }
+        return templateReferences;
+      }
+
+    // Extract logic (if, choose, for-each, etc.)
+    extractLogic() {
+      const logic = [];
+      const extractValueOf = (parentNode) => {
+        const valueOfLogic = [];
+        const valueOfNodes = parentNode.getElementsByTagNameNS(this.namespaceURI, "value-of");
+        for (const valueOfNode of valueOfNodes) {
+          const select = valueOfNode.getAttribute("select");
+          if (select) {
+            valueOfLogic.push({ type: "value-of", select });
+          }
+        }
+        return valueOfLogic;
+      };
+
+      // Extract choose, for-each, if, etc.
+      const chooseNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "choose");
+      for (const chooseNode of chooseNodes) {
+        const nestedLogic = [];
+
+        const whenNodes = chooseNode.getElementsByTagNameNS(this.namespaceURI, "when");
+        for (const whenNode of whenNodes) {
+          const test = whenNode.getAttribute("test");
+          const whenLogic = extractValueOf(whenNode);
+          nestedLogic.push({ type: "when", test, valueOf: whenLogic });
+        }
+
+        const otherwiseNodes = chooseNode.getElementsByTagNameNS(this.namespaceURI, "otherwise");
+        for (const otherwiseNode of otherwiseNodes) {
+          const otherwiseLogic = extractValueOf(otherwiseNode);
+          nestedLogic.push({ type: "otherwise", valueOf: otherwiseLogic });
+        }
+
+        logic.push({ type: "choose", nested: nestedLogic });
+      }
+
+      const forEachNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "for-each");
+      for (const forEachNode of forEachNodes) {
+        const select = forEachNode.getAttribute("select");
+        const forEachLogic = extractValueOf(forEachNode);
+        logic.push({ type: "for-each", select, valueOf: forEachLogic });
+      }
+
+      const ifNodes = this.xmlDoc.getElementsByTagNameNS(this.namespaceURI, "if");
+      for (const ifNode of ifNodes) {
+        const test = ifNode.getAttribute("test");
+        const ifLogic = extractValueOf(ifNode);
+        logic.push({ type: "if", test, valueOf: ifLogic });
+      }
+
+      return logic;
+    }
+
+    // Generate the consolidated report
+    generateReport(templatesByFile) {
+      const namespaces = this.extractNamespaces();
+      const imports = this.extractImports();
+      const includes = this.extractIncludes();
+      const variables = this.extractVariables();
+      const fileName = this.xmlDoc.getElementsByTagName("xsl:stylesheet")[0].getAttribute("href");
+      const templates = this.extractTemplates(templatesByFile, fileName);
+      const logic = this.extractLogic();
+      const unusedImports = this.detectUnusedImports(imports);
+      const unusedIncludes = this.detectUnusedIncludes(includes);
+      const unusedVariables = this.detectUnusedVariables(variables);
+      const unusedTemplates = this.detectUnusedTemplates(templatesByFile);
+      const undeclaredVariables = this.detectUndeclaredVariables();
+      const templateReferences = this.extractTemplateReferences(templatesByFile);
+      
+      const accordion = document.createElement("div");
+      accordion.classList.add("accordion");
+
+      let report = "Extracted Namespaces:\n";
+      namespaces.forEach((ns) => {
+        report += `  - Prefix: ${ns.prefix}, URI: ${ns.uri}\n`;
+      });
+
+      report += "\nExtracted Imports:\n";
+      imports.forEach((href) => {
+        report += `  - Href: ${href}\n`;
+      });
+
+      report += "\nExtracted Unused Imports:\n";
+      unusedImports.forEach((path) => {
+        report += `  - Href: ${path}\n`;
+      });
+
+      report += "\nExtracted Includes:\n";
+      includes.forEach((href) => {
+        report += `  - Href: ${href}\n`;
+      });
+
+      report += "\nExtracted Unused Includes:\n";
+      unusedIncludes.forEach((path) => {
+        report += `  - Href: ${path}\n`;
+      });
+
+      report += "\nExtracted Variables:\n";
+      /*variables.forEach((v) => {
+        report += `<span class="variable" data-line="Line: ${v.lineNumber || 'N/A'}">- Name: ${v.name}, Value: ${v.value}</span>\n`;
+      });*/  //, Value: ${v.value}
+      /*variables.forEach((v, index) => {
+        report += `<span class="variable variable-block" data-line="Line: ${v.lineNumber || 'N/A'}" data-block="${encodeURIComponent(v.fullBlock)}" style="cursor:pointer;">- Name: ${v.name}</span>\n`;
+      });*/
+
+      variables.forEach((v) => {
+        report += `<span class="variable variable-block" data-line="Declared line: ${v.lineNumber || 'N/A'}" data-block="${encodeURIComponent(v.fullBlock, v.usageLines)}" style="cursor:pointer;">- Name: ${v.name}, \n  Type: ${v.type}, \n  Select: ${v.value} </span> \n  (Used at line no: ${v.usageLines.length > 0 ? v.usageLines.join(", ") : "Not used"})\n\n`;
+      });
+
+      /*report += `<h2 class="text-xl font-bold mb-4">Extracted Variables</h2> <div class="max-w-3xl mx-auto"> <div id="reportContainer" class="p-6 bg-gray-100"></div>`
+      variables.forEach((variable, index) => {
+        report += `
+          <div class="border rounded-lg mb-2 bg-white shadow">
+            <button onclick="toggleAccordion(${index})" class="w-full text-left px-4 py-3 bg-gray-200 font-semibold">
+              ${variable.name} (Line: ${variable.usageLines.join(', ')})
+            </button>
+            <div id="content-${index}" class="hidden p-4 bg-gray-50">
+              <p><strong>Value:</strong> ${variable.value}</p>
+              <pre class="bg-gray-100 p-2 rounded text-sm overflow-x-auto">${variable.fullBlock}</pre>
+            </div>
+          </div>
+        `;
+      });
+      report += `</div>`*/
+
+      /*variables.forEach((variable, index) => {
+          const accordionItem = document.createElement("div");
+          accordionItem.classList.add("accordion-item");
+
+          // Header Section
+          const header = document.createElement("div");
+          header.classList.add("accordion-header");
+          header.textContent = `Variable: ${variable.name} (Line: ${variable.lineNumber})`;
+
+          // Body Section
+          const body = document.createElement("div");
+          body.classList.add("accordion-body");
+          body.innerHTML = `
+              <p><strong>Value:</strong> ${variable.value}</p>
+              <p><strong>Full Block:</strong></p>
+              <pre>${variable.fullBlock}</pre>
+              <p><strong>Usage Lines:</strong> ${variable.usageLines.join(", ")}</p>
+          `;
+
+          accordionItem.appendChild(header);
+          accordionItem.appendChild(body);
+          accordion.appendChild(accordionItem);
+
+          // Toggle accordion item on click
+          header.addEventListener("click", () => {
+              accordionItem.classList.toggle("active");
+          });
+          
+      });
+
+      report.appendChild(accordion);*/
+
+
+      // Updated Extracted Unused Variables with Hover
+      report += "\nExtracted Unused Variables:\n";
+      unusedVariables.forEach((v) => {
+        report += `<span class="variable unused-variable" data-line="Line: ${v.lineNumber}">- Name: ${v.name}</span>\n`;
+      });
+
+      // Updated Extracted Undeclared Variables with Hover
+      report += "\nExtracted Undeclared Variables:\n";
+      undeclaredVariables.forEach((v) => {
+        report += `<span class="variable undeclared-variable" data-line="Line: ${v.lineNumber}">- Name: ${v.name}</span>\n`;
+      });
+
+      report += "\nExtracted Templates:\n";
+      templates.forEach((t) => {
+        report += `  - Name: ${t.name}, Match: ${t.match}\n`;
+      });
+
+      report += "\nExtracted Unused Templates:\n";
+      unusedTemplates.forEach((t) => {
+        report += `  - Name: ${t.name}, File: ${t.fileName}\n`;
+      });
+
+      // Identify shared templates across files
+      report += "\nShared Templates Across Files:\n";
+      for (const file in templatesByFile) {
+        report += `File: ${file}\n`;
+        templatesByFile[file].forEach((template) => {
+          const sharedByFiles = Object.keys(templatesByFile).filter((otherFile) =>
+            otherFile !== file && templatesByFile[otherFile].some((t) => t.name === template.name)
+          );
+          if (sharedByFiles.length > 0) {
+            report += `  - Shared Template: ${template.name}, Shared by: ${sharedByFiles.join(", ")}\n`;
+          }
+        });
+      }
+
+      report += "\nExtracted Templates Reference:\n";
+      templateReferences.forEach((t) => {
+        report += `  - Name: ${t.name}, File: ${t.fileName}\n`;
+      });
+
+      report += "\nExtracted Logic:\n";
+      const formatLogic = (logicArray, depth = 1) => {
+        logicArray.forEach((l) => {
+          const indent = "  ".repeat(depth);
+
+          if (l.type === "choose") {
+            report += `${indent}- Type: choose\n`;
+            l.nested.forEach((nested) => {
+              if (nested.type === "when") {
+                report += `${indent}  - Type: when, Test: ${nested.test}\n`;
+                nested.valueOf.forEach((vo) => {
+                  report += `${indent}    - Type: value-of, Select: ${vo.select}\n`;
+                });
+              } else if (nested.type === "otherwise") {
+                report += `${indent}  - Type: otherwise\n`;
+                nested.valueOf.forEach((vo) => {
+                  report += `${indent}    - Type: value-of, Select: ${vo.select}\n`;
+                });
+              }
+            });
+            report += "\n\n"; // Line break after <xsl:choose>
+          } else if (l.type === "for-each") {
+            report += `${indent}- Type: for-each, Select: ${l.select}\n`;
+            l.valueOf.forEach((vo) => {
+              report += `${indent}  - Type: value-of, Select: ${vo.select}\n`;
+            });
+            report += "\n"; // Line break after <xsl:for-each>
+          } else if (l.type === "if") {
+            report += `${indent}- Type: if, Test: ${l.test}\n`;
+            l.valueOf.forEach((vo) => {
+              report += `${indent}  - Type: value-of, Select: ${vo.select}\n`;
+            });
+            report += "\n\n"; // Line break after <xsl:if>
+          }
+        });
+      };
+
+      formatLogic(logic);
+
+      return report;
+    }
+  }
+
+  // Event listener to open the full variable block in a new tab
+  document.addEventListener('click', function (e) {
+    if (e.target.classList.contains('variable-block')) {
+      const codeBlock = decodeURIComponent(e.target.getAttribute('data-block'));
+      
+      // Open in a new tab with formatted code
+      const newTab = window.open('', '_blank');
+      newTab.document.write(`<pre style="white-space: pre-wrap; font-family: monospace;">${escapeHtml(codeBlock)}</pre>`);
+      newTab.document.title = "Variable Code Block";
+    }
+  });
+
+  // Helper function to escape HTML for safe display
+  function escapeHtml(unsafe) {
+    return unsafe
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+  document.addEventListener('mouseover', function (e) {
+    if (e.target.classList.contains('variable') || 
+        e.target.classList.contains('unused-variable') || 
+        e.target.classList.contains('undeclared-variable')) {
+          
+      const lineInfo = e.target.getAttribute('data-line') || 'Line: Unknown';
+      e.target.setAttribute('title', lineInfo);
+    }
+  });
+
+  // Toggle function for accordion
+function toggleAccordion(index) {
+  const content = document.getElementById(`content-${index}`);
+  content.classList.toggle("hidden");
+}
+
+</script>
+
+</body>
+
+</html>
